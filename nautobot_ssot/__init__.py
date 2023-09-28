@@ -1,6 +1,7 @@
 """Plugin declaration for nautobot_ssot."""
 # Metadata is inherited from Nautobot. If not including Nautobot in the environment, this should be added
 
+import os
 try:
     from importlib import metadata
 except ImportError:
@@ -34,7 +35,9 @@ def _check_for_conflicting_apps():
         )
 
 
-_check_for_conflicting_apps()
+verify_app_names = os.getenv("VERIFY_SSOT_APP_NAMES")
+if verify_app_names not in ["FALSE", "False", "false"]:
+    _check_for_conflicting_apps()
 
 
 class NautobotSSOTPluginConfig(PluginConfig):
