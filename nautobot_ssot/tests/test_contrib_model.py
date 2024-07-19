@@ -13,6 +13,8 @@ from nautobot.extras import models as extras_models
 from nautobot.tenancy import models as tenancy_models
 
 from nautobot_ssot.contrib import NautobotModel, NautobotAdapter
+from nautobot_ssot.contrib.helpers import relationship_fields_dict
+from nautobot_ssot.contrib.types import CustomRelationshipAnnotation, RelationshipSideEnum
 from nautobot_ssot.tests.contrib_base_classes import (
     TenantModelCustomRelationship,
     ProviderModelCustomRelationship,
@@ -147,6 +149,65 @@ class BaseModelCustomRelationshipTestWithDeviceData(TestCaseWithDeviceData):
                 "status__name": "Connected",
             },
         )
+
+
+class BaseModelTestPrepForeignKeyMethod(TestCase):
+    """Tests for the `_handle_foreign_lookup` method."""
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        # NOTE: Copied from models.py, update here if changed the
+        cls.relationship_fields = relationship_fields_dict()
+        cls.tenant = NautobotTenant(name="Standard Tenant")
+        cls.tenant_custom = TenantModelCustomRelationship(name="Tenant With Custom Relationship")
+    
+
+    def test_valid_normal_foreign_key(self):
+        tenant_group_name = "Test Tenant Group"
+        
+        result = self.tenant._prep_foreign_key_field(
+            relationship_fields=relationship_fields_dict(),
+            field="tenant_group__name",
+            value=tenant_group_name,
+            custom_relationship_annotation=None,
+        )
+        self.assertIsInstance(result, dict)
+        self.assertEqual(len(result["foreign_keys"]), 1)
+        self.assertEqual(len(result["many_to_many_fields"]), 0)
+        self.assertEqual(len(result["custom_relationship_foreign_keys"]), 0)
+        self.assertEqual(len(result["custom_relationship_many_to_many_fields"]), 0)
+
+        tenant_group = result["foreign_keys"].get("tenant_group", False)
+        self.assertTrue(tenant_group)
+        self.assertEqual(tenant_group_name, tenant_group["name"])
+
+    def test_invalid_normal_foreign_key_field_name(self):
+        with self.assertRaises(ValueError):
+            self.tenant._prep_foreign_key_field(
+                relationship_fields=relationship_fields_dict(),
+                field="tenant_group",
+                value="Test Tenant Group",
+                custom_relationship_annotation=None,
+            )
+
+    def test_valid_custom_foreign_key(self):
+        custom_relationship_annotation = CustomRelationshipAnnotation(
+            name="test_custom_relationship",
+            side=RelationshipSideEnum.DESTINATION,
+        )
+
+        result = self.tenant_custom._prep_foreign_key_field(
+            relationship_fields=relationship_fields_dict(),
+            field="provider__name",
+            value={"name": "Test Provider"},
+            custom_relationship_annotation=custom_relationship_annotation,
+        )
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(len(result["foreign_keys"]), 0)
+        self.assertEqual(len(result["many_to_many_fields"]), 0)
+        self.assertEqual(len(result["custom_relationship_foreign_keys"]), 1)
+        self.assertEqual(len(result["custom_relationship_many_to_many_fields"]), 0)
 
 
 class BaseModelManyToManyTest(TestCase):

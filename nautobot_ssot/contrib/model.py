@@ -17,6 +17,7 @@ from nautobot.extras.models import Relationship, RelationshipAssociation
 from nautobot.extras.choices import RelationshipTypeChoices
 
 from typing_extensions import get_type_hints
+from nautobot_ssot.contrib.helpers import relationship_fields_dict
 from nautobot_ssot.contrib.types import (
     CustomFieldAnnotation,
     CustomRelationshipAnnotation,
@@ -110,6 +111,58 @@ class NautobotModel(DiffSyncModel):
         return super().create(diffsync, ids, attrs)
 
     @classmethod
+    def _prep_foreign_key_field(
+        cls,
+        relationship_fields,
+        field,
+        value,
+        custom_relationship_annotation,
+    ):
+        """Prep a single foreign key for contrib SSoT Nautobot operations.
+
+        Foreign keys are denoted by a double underscore (`__`).
+
+        This method adds an entry into the appropriate dictionary of `relationship_fields` based on whether it is a
+        standard foreign key or custom foreign key. It does not handle one to many or many-to-many relationships.
+
+        Parameters:
+        ===========
+            relationship_fields: dict
+            field: str
+            value: any
+            custom_relationship_annotation: [NoneType, CustomRelationshipAnnotation]
+
+
+        Example: If field is `tenant__group__name`, then:
+            `foreign_keys["tenant"]["group__name"] = value` or
+            `custom_relationship_foreign_keys["tenant"]["group__name"] = value`
+        
+        The model class will be added to the dictionary for normal foreign keys, so we can later use it for querying:
+            `foreign_keys["tenant"]["_model_class"] = nautobot.tenancy.models.Tenant
+        
+        For custom relationship foreign keys, we add the annotation instead:
+            `custom_relationship_foreign_keys["tenant"]["_annotation"] = CustomRelationshipAnnotation(...)
+        """
+        related_model, lookup = field.split("__", maxsplit=1)
+        is_custom_relationship = True if custom_relationship_annotation else False
+
+        # Custom relationships
+        if is_custom_relationship:
+            relationship_fields["custom_relationship_foreign_keys"][related_model][lookup] = value
+            relationship_fields["custom_relationship_foreign_keys"][related_model][
+                "_annotation"
+            ] = custom_relationship_annotation
+
+        # Normal foreign keys
+        else:
+            django_field = cls._model._meta.get_field(related_model)
+            relationship_fields["foreign_keys"][related_model][lookup] = value
+            # Add a special key to the dictionary to point to the related model's class
+            relationship_fields["foreign_keys"][related_model]["_model_class"] = django_field.related_model
+
+        return relationship_fields
+
+    @classmethod
     def _handle_single_field(
         cls, field, obj, value, relationship_fields, diffsync
     ):  # pylint: disable=too-many-arguments,too-many-locals, too-many-branches
@@ -129,6 +182,8 @@ class NautobotModel(DiffSyncModel):
 
         # Handle custom fields. See CustomFieldAnnotation docstring for more details.
         custom_relationship_annotation = None
+        is_custom_relationship = False
+
         metadata_for_this_field = getattr(type_hints[field], "__metadata__", [])
         for metadata in metadata_for_this_field:
             if isinstance(metadata, CustomFieldAnnotation):
@@ -136,31 +191,18 @@ class NautobotModel(DiffSyncModel):
                 return
             if isinstance(metadata, CustomRelationshipAnnotation):
                 custom_relationship_annotation = metadata
+                is_custom_relationship = True
                 break
 
-        # Prepare handling of foreign keys and custom relationship foreign keys.
-        # Example: If field is `tenant__group__name`, then
-        # `foreign_keys["tenant"]["group__name"] = value` or
-        # `custom_relationship_foreign_keys["tenant"]["group__name"] = value`
-        # Also, the model class will be added to the dictionary for normal foreign keys, so we can later use it
-        # for querying:
-        # `foreign_keys["tenant"]["_model_class"] = nautobot.tenancy.models.Tenant
-        # For custom relationship foreign keys, we add the annotation instead:
-        # `custom_relationship_foreign_keys["tenant"]["_annotation"] = CustomRelationshipAnnotation(...)
+        # Handle foreign references.
+        # Foreign references in Django are denoted by a double underscore (`__`) in the field name.
         if "__" in field:
-            related_model, lookup = field.split("__", maxsplit=1)
-            # Custom relationship foreign keys
-            if custom_relationship_annotation:
-                relationship_fields["custom_relationship_foreign_keys"][related_model][lookup] = value
-                relationship_fields["custom_relationship_foreign_keys"][related_model][
-                    "_annotation"
-                ] = custom_relationship_annotation
-            # Normal foreign keys
-            else:
-                django_field = cls._model._meta.get_field(related_model)
-                relationship_fields["foreign_keys"][related_model][lookup] = value
-                # Add a special key to the dictionary to point to the related model's class
-                relationship_fields["foreign_keys"][related_model]["_model_class"] = django_field.related_model
+            relationship_fields = cls._prep_foreign_key_field(
+                relationship_fields,
+                field,
+                value,
+                custom_relationship_annotation,
+            )
             return
 
         # Prepare handling of custom relationship many-to-many fields.
@@ -212,16 +254,8 @@ class NautobotModel(DiffSyncModel):
     @classmethod
     def _update_obj_with_parameters(cls, obj, parameters, diffsync):
         """Update a given Nautobot ORM object with the given parameters."""
-        relationship_fields = {
-            # Example: {"group": {"name": "Group Name", "_model_class": TenantGroup}}
-            "foreign_keys": defaultdict(dict),
-            # Example: {"tags": [Tag-1, Tag-2]}
-            "many_to_many_fields": defaultdict(list),
-            # Example: TODO
-            "custom_relationship_foreign_keys": defaultdict(dict),
-            # Example: TODO
-            "custom_relationship_many_to_many_fields": defaultdict(dict),
-        }
+        relationship_fields = relationship_fields_dict()
+
         for field, value in parameters.items():
             cls._handle_single_field(field, obj, value, relationship_fields, diffsync)
 
