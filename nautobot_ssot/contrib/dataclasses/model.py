@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from nautobot_ssot.contrib.model import NautobotModel
 from nautobot.core.models import BaseModel
-from typing_extensions import List, Any, Optional, Dict, get_type_hints
+from typing_extensions import Dict, get_type_hints
 from nautobot_ssot.contrib.dataclasses.cache import ORMCache
 from nautobot_ssot.contrib.dataclasses.attributes import AttributeInterface, attribute_interface_factory
 
