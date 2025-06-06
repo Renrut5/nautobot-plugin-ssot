@@ -1,4 +1,4 @@
-
+"""Interface dataclass for connecting DiffSync"""
 
 from dataclasses import dataclass, field
 from nautobot_ssot.contrib.model import NautobotModel
@@ -10,10 +10,15 @@ from nautobot_ssot.contrib.dataclasses.attributes import AttributeInterface, att
 
 @dataclass
 class NautobotModelInterface:
-    """Interface class for interacting with Nautobot ORM instances."""
+    """Interface class for interacting with Nautobot ORM instances.
+    
+    This class manages the attributes and attribute interfaces for a given `NautobotModel` class. Since each
+    `DiffSyncModel` class can vary between implementations, adapters should not interact attribute interfaces
+    directly, but instead through this interface class only.
+    """
 
     diffsync_class: NautobotModel
-    cache: ORMCache = field(repr=False, default_factory=lambda : ORMCache())
+    cache: ORMCache = field(repr=False, default_factory=lambda : ORMCache())  # pylint: disable=unnecessary-lambda
     attribute_interfaces: Dict[str, AttributeInterface] = field(repr=False, init=False)
     type_hints: dict = field(init=False, repr=False)
 
@@ -33,7 +38,11 @@ class NautobotModelInterface:
         """Return a list of synced attributes."""
         return self.attribute_interfaces.keys()
 
-    def get_parameters(self, db_obj: BaseModel) -> Dict:
+    def get_attribute(self, db_obj: BaseModel, attribute: str):
+        """Return the value of a single attribute given a ORM instance and attribute name."""
+        return self.attribute_interfaces[attribute].load(db_obj)
+
+    def get_attributes_dict(self, db_obj: BaseModel) -> Dict:
         """Return a dictionary of all parameters and their values for passed Nautobot Database Models."""
         parameters = {}
         for attribute_name, interface in self.attribute_interfaces.items():
